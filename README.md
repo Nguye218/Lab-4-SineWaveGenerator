@@ -1,2 +1,639 @@
 # Lab-4-SineWaveGenerator
 Generatates a sine wave with user input that is 1-63 Hz
+
+/******************************************************************************
+* EECE 244 Lab 4 Code
+
+* This code create a tone generater that can generate waves range from 1 to
+* 63Hz. There are two interface for this, switch mode and terminal mode. When
+* the switches are being used the user input is neglected. Press 'q' to enter
+* a new input
+*
+* Terminal mode ask user to enter value from 1 to 63, to generate
+* 1 to 63mHZ waves. It also check the invalid value entered and output an error
+* message.
+*
+* Andy Nguyen, 02/25/2021
+******************************************************************************/
+
+
+          .syntax unified        /* define Syntax */
+          .cpu cortex-m4
+          .fpu fpv4-sp-d16
+
+          .globl main            /* make main() global so outside file */
+
+          .equ BIT0, 0x01
+          .equ BIT1, 0x01<<1
+          .equ BIT2, 0x01<<2
+          .equ BIT3, 0x01<<3
+          .equ BIT4, 0x01<<4
+          .equ BIT8, 0x01<<8
+          .equ BIT16, 0x01<<16
+          .equ BIT18, 0x01<<18
+          .equ BIT19, 0x01<<19
+
+          .equ BITFF, 0xFFFFFFFF
+        //Defining Port Addresses
+          .equ PORTB_PCR0, 0x4004A000   // Define Pin Control Register Port B
+          .equ PORTC_PCR0, 0x4004B000   // Define Pin Control Register Port C
+          .equ PORTD_PCR0, 0x4004C000   // Define Pin Control Register Port D
+
+
+        //offsets
+          .equ PDOR, 4*0     //Output Register
+          .equ PDDR, 4*5     //Direction Register
+          .equ PDIR, 4*4     //Input Register
+
+         //PCR offsets
+          .equ PCR0, 4*0
+          .equ PCR1, 4*1
+          .equ PCR2, 4*2
+          .equ PCR3, 4*3
+          .equ PCR4, 4*4
+          .equ PCR5, 4*5
+          .equ PCR6, 4*6
+          .equ PCR7, 4*7
+          .equ PCR8, 4*8
+          .equ PCR9, 4*9
+          .equ PCR16, 4*16
+          .equ PCR18, 4*18
+          .equ PCR19, 4*19
+
+        //Clock
+          .equ SIM_SCGC5, 0x40048038    // Initialize the clock to register 5
+          .equ SCGC5_MUX, BIT0<<10|BIT0<<11|BIT0<<12  //set bits 10,11,12
+
+        //Data Direction Register for Port B and D
+          .equ GPIOD_PDDR, 0x400FF0D4   // Define Port Data Direction Register D
+          .equ GPIOB_PDDR, 0x400FF054   // Define Port Data Direction Register B
+
+        //Data Input Register for Port C
+
+          .equ GPIOC, 0x400FF090        // Define Port Data Input Register C
+          .equ GPIOD, 0x400FF0C0
+          .equ GPIOB, 0x400FF040
+
+          .equ PORT_MUX, 0x100
+
+          .equ PORT_MUX, 0x100
+          .equ PORT_PE_ON, 0x01<<1
+          .equ PORT_PS_UP, 0x01
+
+          .equ TC1US, 22
+
+
+          .section .text
+main:
+            bl IOShieldInit
+            mov r0,#0
+            bl K22FRDM_BootClock   // initialize the clock to 120Mhz     (not 20.9Mhz)
+            mov r0,#0              //moves 0 to ro to clear it
+
+            bl BIOOpen             //open IO
+            ldr r1,=Counter        //loads in counter
+            mov r2, #0             //move in 0 into r2
+            str r2, [r1]           //store into r2
+
+            bl SwArrayRead         //call switch array read subroutine
+            cmp r0,#0              //compare the swithc values
+            bne SwitchManip        //branch to Switch manipulation if switches are not equal to zero
+
+TerminalMessage:
+
+            ldr r0,=HzVal        //user input place holder
+            mov r1,#0
+            str r1,[r0]
+            ldr r0, =message     //prompt the user to input a freq that is 1-63
+            bl BIOPutStrg
+            ldr r0, =NewLine     //new line
+            bl BIOPutStrg
+
+            mov r0, #3           //array that is 3 to store the value
+            ldr r1, =StringIn
+            bl BIOGetStrg
+
+            cmp r0, #1           //if the users input is valid it will move on to the rest of the checking sequence
+            bne valid
+            ldr r0,=Error        //error message
+            bl BIOPutStrg
+
+          b TerminalMessage      //terminal loop
+
+//valid loop
+valid:
+
+            ldrb r0, [r1, #1]    //Checks second character to see if its NUll
+            cmp r0,#0
+            beq SingleNum        //branch if its a single digit
+
+           //double digit check
+            ldrb r0, [r1,#0]    //checking thge first spot in the array
+            sub r0,#0x30        //subtract ascii 30 to get 6
+
+            cmp r0,#6           //cmp subtract decimal 6 to test if greater/equal to zero
+            beq CapValue        //if equal to 0 then test for max single digit value
+            bgt error           //greater then meaning the value was greater then 60
+            cmp r0,#0           //if less then zero then negative number and is an error
+            blt error
+
+            mov r4, #10         //move by 10 so we can turn the ascii into dec
+            mul r0,r4           //for the next operation
+            ldr r2,=HzVal
+            ldr r3,[r2]
+            add r3,r0           //add user input to frequency value
+            str r3,[r2]
+
+           //00 check
+            ldrb r0, [r1, #1]   // checks to see if there is a zero in the first digit
+            sub r0,#0x30
+            cmp r0,#0
+            beq error           // error if there is
+
+           //#0 valid number check
+            ldrb r0, [r1,#1]  //second array to check if valid
+            sub r0,#0x30
+
+            cmp r0,#0          //is the value greater then 10? if so its an error
+            blt error
+            cmp r0,#9
+            bgt error          // is the value a negative number? if so its an error
+
+           //value is valid up to this point
+            ldr r2,=HzVal
+            ldr r3,[r2]
+            add r3,r0
+            str r3,[r2]
+
+           b Cleared     //no error call terminal again
+
+//checks the max value of the tens digit
+CapValue:
+            mov r4, #10      //move by 10 so we can turn the ascii into dec
+            mul r0,r4        //for the next operation
+
+           //Checking if greater then 63
+            ldr r2,=HzVal
+            ldr r3,[r2]
+            add r3,r0
+            str r3,[r2]
+
+            ldrb r0, [r1,#1]  //calling the array
+            sub r0,#0x30      //subtract ascii 30 to leave 10's digit left
+
+            cmp r0,#3
+            bgt error         //value is greater then 3 (63) so is an error
+            cmp r0,#0
+            blt error        //value was negative, so its an error
+
+          //value is valid up to this point
+            ldr r2,=HzVal
+            ldr r3,[r2]
+            add r3,r0
+            str r3,[r2]
+
+           b Cleared   //no error call terminal again
+
+//single number loop
+SingleNum:
+
+            ldrb r0,[r1,#0]  //calling the array
+
+            sub r0,#0x30    //subtract ascii 30 to compare valuesfor single digit
+            cmp r0,#1        // is it less then 0
+            blt error        //do a comparison too see if its negative
+            cmp r0,#9        //is it greater then 9
+            bgt error        //error message
+
+
+            ldr r2,=HzVal    //load single digit value into r2
+            ldr r3,[r2]      //load the contents into r3
+            add r3,r0        //add Freqval to string
+            str r3,[r2]      //store into r2
+
+           b Cleared//no error call terminal again
+
+//promted error message
+error:
+
+            ldr r0,=Error    //error message
+            bl BIOPutStrg
+
+           b TerminalMessage //loop back to terminal
+
+//number is cleared and message is prometed
+Cleared:
+
+           ldr r0,=Valid   //valid entry message
+           bl BIOPutStrg
+           ldr r2,=HzVal    //display the freq value
+           ldrb r0,[r2,#0]
+           mov r1,#0
+           bl BIOOutDecByte
+           ldr r0, =Freq
+           bl BIOPutStrg
+
+           ldr r0, =qLoop    //promts to put a new freq value
+           bl BIOPutStrg
+
+           ldr r0, =NewLine  //new line
+           bl BIOPutStrg
+
+//switch enabled so manipulation loop is called
+Manipulation:
+
+           bl BIORead
+           cmp r0,#0x71
+           beq TerminalMessage    //branch to term
+           bl SwArrayRead         // call switch array read subroutine
+           cmp r0,#0              // is the switches equal to 0
+           bne SwitchManip        //branch to Switch Manipulation if its not equal to o
+
+           bl WaveTableCheck      //Wave check subroutine call
+           bl LEDWrite            //LED write subroutine call
+           bl SampleTime          //Sample time subroutine call
+           bl Delayus             //Delay Micro Second Subroutine call
+
+           ldr r4,=Counter     //loads the counter to r4
+           ldr r5,[r4]         //contents of the counter into r5
+           adds r5,#1          //add with s flag into r5
+           cmp r5,#62          //compare with 62 (lookuptable
+           bgt Reset           //branch to reset if greater then
+           str r5,[r4]         //store to r5
+
+          b Manipulation            //Exit to Manip
+
+//reset loop
+Reset:
+
+          ldr r4,=Counter      //load counter
+          mov r6,#0            //move 0 into r6
+          str r6,[r4]          //store zero into the coutner
+
+         b Manipulation               //exit to Manip
+
+//switch manipulation loop
+SwitchManip:
+
+
+         bl SwArrayRead         //call switch array read subroutine
+
+         cmp r0,#0              //compare the switch values
+         beq TerminalMessage    //terminal branch if the switches are all down
+         cmp r0,#63             //compare the lookup table
+         blt NoSaturation       //branch to No saturation if freq value is less then 63
+         mov r6,#63
+         ldr r4,=HzVal          //move the user input into r4 so we dont lose it
+         str r6,[r4]            //move the contents of r4 into r6
+
+//no saturation loop
+NoSaturation:
+
+         ldr r4,=HzVal       //store the frequency value into r4
+         str r0,[r4]         //store the contents into r0
+
+         bl WaveTableCheck   //call wave table check sub routine
+         bl LEDWrite         //call LED write subroutine
+         bl SampleTime       //call sample time sub routine
+         bl Delayus          //call delay sub routine
+
+         ldr r4,=Counter     //load the counter into r4
+         ldr r5,[r4]         //load the contents into r5
+         adds r5,#1          // add  with flag 1
+         cmp r5,#62          //compare 62 (lookuptable value)
+         bgt Reset           //branch if greater then the lookup table
+         str r5,[r4]         //store it back into r5
+
+        b SwitchManip
+
+//switch reset loop
+SwitchReset:
+
+
+        ldr r4, =Counter    //load the counter into r4
+        mov r6,#0           // move 0 into r6
+        str r6,[r4]         // store zero into the counter to reset the counter
+
+       b SwitchManip
+
+
+/**************************************************************************
+* void Delayus(INT32U us) – This subroutine creates a micro second software
+* delay when it is called
+*
+* Params: none
+* Returns: none
+* MCU: K22F, with 120 Mhz
+* Andy Nguyen, 02/19/2021
+**************************************************************************/
+
+Delayus:
+
+         push {lr}         //[1]
+
+          mov r1, #TC1US    //[1]
+          mul r0, r1        //[1]
+
+Delayloop:
+
+          subs r0,#1        //[1]
+          bne Delayloop     //[1/4]
+
+         pop {pc}      //[1]
+
+/**************************************************************************
+* INT8U SwArrayRead(void)–This subroutine reads the input from the switches
+* and store the value as an 8bits integer into r0.
+*
+* Params: none
+* Returns: An 8-bit integer
+* MCU: K22F
+* Andy Nguyen, 02/10/2021
+**************************************************************************/
+ SwArrayRead:
+
+        push {lr}
+
+         movw r0, #:lower16:GPIOC    //Read GPOIC_PDIR
+         movt r0, #:upper16:GPIOC
+         ldr r1, [r0]
+         lsr r1, #2                  //Logical shift Right 2
+         mov r0, r1                  //moves r1 into r0
+
+        pop {pc}
+
+
+/**************************************************************************
+* void IOSheildInit(void) – This subroutine Turns on the Clocks for Ports
+* B,C, and D and sets them as output registers
+*
+* Params: none
+* Returns: none
+* MCU: K22F
+* Andy Nguyen, 02/19/2021
+**************************************************************************/
+IOShieldInit:
+ push {lr}
+
+
+
+      //Clock Enable for PORTS//
+         movw r0, #:lower16:SIM_SCGC5
+         movt r0, #:upper16:SIM_SCGC5
+         ldr r1, [r0]                               //Reads SCGC5 from r0
+         orr r1, #(SCGC5_MUX)                       //Modify and set PORT's B,C,D bit
+         str r1, [r0]                               //Stores and write SCG5
+
+
+      //Port-D outputs D2,D3,D4
+         movw r2, #:lower16:PORTD_PCR0              //gets port D address
+         movt r2, #:upper16:PORTD_PCR0
+         mov r0, #BIT8                              //writes BIT8 MUX tp PCR
+         str r0, [r2, #PCR2]
+         str r0, [r2, #PCR3]
+         str r0, [r2, #PCR4]
+
+
+         movw r2, #:lower16:GPIOD_PDDR              //gets GIOD base address
+         movt r2, #:upper16:GPIOD_PDDR
+         mov r0, #(BIT2|BIT3|BIT4)                  //Makes bits 2-4 Outputs
+         str r0, [r2,#PDDR]
+
+         movw r2, #:lower16:GPIOD_PDDR
+         movt r2, #:upper16:GPIOD_PDDR
+         ldr r0, [r2,#PDOR]                         //Read PDOR
+         orr r0, #(BIT2|BIT3|BIT4)                  //Modify - set bit(s) 2,3,4
+         str r0, [r2,#PDOR]                         //Write PDOR
+
+
+      //Port-B Outputs
+         movw r2, #:lower16:PORTB_PCR0                //gets port B address
+         movt r2, #:upper16:PORTB_PCR0
+         mov r0, #BIT8                                //writes BIT8 MUX to PCR
+         str r0, [r2, #PCR0]
+         str r0, [r2, #PCR1]
+         str r0, [r2, #PCR16]
+         str r0, [r2, #PCR18]
+         str r0, [r2, #PCR19]
+
+         movw r2, #:lower16:GPIOB_PDDR
+         movt r2, #:upper16:GPIOB_PDDR
+         mov r0, #BIT1                                 //Makes bit 1 and output
+         str r0, [r2,#PDDR]                            //Write PDOR
+
+         movw r2, #:lower16:GPIOB_PDDR
+         movt r2, #:upper16:GPIOB_PDDR
+         movw r0, #:lower16: #(BIT0|BIT1)              //Mask For 5 outputs
+         movt r0, #:upper16: #(BIT16|BIT18|BIT19)      //LED - D3-D7
+         str r0, [r2,#PDOR]                            //Write PDOR
+
+
+
+    //Port-C Input
+         movw r2, #:lower16:PORTC_PCR0
+         movt r2, #:upper16:PORTC_PCR0
+         movw r0, #(PORT_PE_ON|PORT_MUX|PORT_PS_UP)   //Pull enable pull switch enable
+         str r0, [r2, #PCR2]
+         str r0, [r2, #PCR3]
+         str r0, [r2, #PCR4]
+         str r0, [r2, #PCR5]
+         str r0, [r2, #PCR6]
+         str r0, [r2, #PCR7]
+         str r0, [r2, #PCR8]
+         str r0, [r2, #PCR9]
+
+
+   pop {pc}
+
+
+
+
+/**************************************************************************
+* INT8U WaveTableCheck(Void) – This subroutine compares the values of the
+* 8-bit integer passed through the subroutine with the values of the Sine
+* Wave lookup table and enables the LED that corrisponds with the lookup
+* Table.
+
+* Params: An 8-bit integer passed through in r0.
+* Returns: none
+* MCU: K22F
+* Andy Nguyen, 02/25/2021
+**************************************************************************/
+
+WaveTableCheck:
+
+            push {lr}
+
+          ldr r1,=Counter           //loading the counter into r1
+          ldr r2,[r1]               //loadind the contents into r2
+          mov r1,#2                 //moving 2 in to r1
+          mul r1,r2                 //multiply by 2 to grab the 4 values of the lookup table
+          ldr r2,=SineWaveTable     //load in the Lookup table
+          ldrh r3,[r2,r1]           //grab the lookup table values
+
+
+         //D0
+          cmp r3,#0x2000            //compare the values to see if the LED will turn on
+          itt le                    //iff the block, Less then or equal to 0 to .25
+          movle r0,#0x1             //LED D0
+          ble GoBack                //iff not then go back to the loop
+
+         //D1
+          cmp r3,#0x4000            //same comments for the rest ..............
+          itt le                    //.25- .50
+          movle r0,#0x2
+          ble GoBack
+
+         //D2
+          cmp r3,#0x6000           //.50- .75
+          itt le
+          movle r0,#0x4
+          ble GoBack
+
+         //D3
+          cmp r3,#0x8000          //.... and so on
+          itt le
+          movle r0,#0x8
+          ble GoBack
+
+         //D4
+          cmp r3,#0xA000
+          itt le
+          movle r0,#0x10
+          ble GoBack
+
+         //D5
+          cmp r3,#0xC000
+          itt le
+          movle r0,#0x20
+          ble GoBack
+
+         //D6
+          cmp r3,#0xE000
+          itt le
+          movle r0,#0x40
+          ble GoBack
+
+         //D7
+          ldr r1,=#0xFFFF
+          cmp r3,r1
+          itt le
+          movle r0,#0x80
+          ble GoBack
+
+//pops out of the subroutine
+GoBack:
+
+        pop {pc}
+
+/**************************************************************************
+* void LEDWrite(VOID) – This subroutine passes an 8-bit Integer that each
+* correspond to a specific LED, D0-D7 with Ports B and D
+*
+* Params: An 8-bit integer passed through in r0.
+* Returns: none
+* MCU: K22F
+* Andy Nguyen, 02/10/2021
+**************************************************************************/
+LEDWrite:
+
+
+       push {lr}
+
+
+
+         mov r2, r0                   //moving input (r0) into r2
+         eor r2, #BITFF               //Inverts the Values in r2 (inverts the inputs)
+
+         //D0-D2
+         movw r0, #:lower16:GPIOD     // Read GPIOD
+         movt r0, #:upper16:GPIOD
+         ldr r1, [r0]                 //loading input for LED into R1
+         bfi r1, r2, #2, #3           // 4 bits from r1 put into r4 at pos 2
+         lsr r2, #3
+         str r1, [r0]                 //writes LED
+
+         //D3 & D4
+         movw r0, #:lower16:GPIOB    // Read GPIOB
+         movt r0, #:upper16:GPIOB
+         ldr r1, [r0]                //loading input for LED into R1
+         bfi r1, r2, #0, #2          // 2 bits from r1 put into r4 at pos 8
+         lsr r2, #2
+         str r1, [r0]                //writes LED
+
+         //D5
+         ldr r1, [r0]                //loading input for LED into R1
+         bfi r1, r2, #16, #1         // 1 bit from r1  put into r4 at pos 16
+         lsr r2, #1
+         str r1, [r0]                //writes LED
+
+         //D6 & D7
+         ldr r1, [r0]                //loading input for LED into R1
+         bfi r1, r2, #18, #2         //2 bits from r1 put into r4 at pos 18
+         str r1, [r0]                //writes LED
+
+        pop {pc}
+
+
+
+/**************************************************************************
+* VoidSampleTime:(void) – This subroutine takes a 4 bits input value from
+* 1 to 64. It has the algorithm to calculate the amount of time to call the
+* the delay US to create the proper timing for the Sine wave
+* The equation is Ts= 10^6/(64*frequency) us
+*
+* Params: 4 bit integer
+* Returns: a 9 bit integer stored in r0
+* MCU: K22F
+* Andy Nguyen, 02/27/2021
+**************************************************************************/
+SampleTime:
+              push {lr}
+
+         bl SwArrayRead     //reading in the switch value invcase thats being used
+         mov r1,r0
+         cmp r0,#0          //switch comparison
+
+
+         ldr r0, =HzVal     //loading in frequency value
+         ldr r1,[r0]
+         ldr r2,=#0xF4240   //10^6
+         ldr r3,=#40        //64
+         mul r1,r3          //HzVal*64
+         udiv r0,r2,r1      //10^6 /(HzVal*64)
+
+        b Exit
+
+Exit:
+              pop {pc}
+
+
+
+
+
+/***********************************************************ASCIZ*****************************************************************************/
+
+message:        .asciz "Enter a frequency that is between 1 and 63 Hz:\n\r"
+Error:          .asciz "Error: The Frequency you put was out of range. Make sure it is between 1-63 (no decimals). Try Again.\n\n\r"
+NewLine:        .asciz "\n\r"
+Valid:          .asciz "You Entered: "
+Freq:           .asciz " Hz  \n\n\r"
+qLoop:          .asciz "Press 'q' to enter a new frequency value that is 1-63.\n\n\r"
+
+/*********************************************************************************************************************************************/
+
+
+ .section .bss          /* The following are variables in RAM */
+
+ .comm Counter, 1       //keeps value of current counter
+ .comm StringIn, 3      //String array size (3)
+ .comm HzVal, 1         //User input
+
+ .section .rodata
+
+SineWaveTable:  .hword 0x8C8C,0x98F9,0xA528,0xB0FC,0xBC57,0xC71D,0xD134,0xDA82,0xE2F2,0xEA6E,0xF0E3,0xF642,0xFA7D,0xFD8A,0xFF62,0xFFFF,0xFF62,0xFD8A,0xFA7D,0xF642,0xF0E3,0xEA6E,0xE2F2,0xDA82,0xD134,0xC71D,0xBC57,0xB0FC,0xA528,0x98F9,0x8C8C,0x8000,0x7374,0x6707,0x5AD8,0x4F04,0x43A9,0x38E3,0x2ECC,0x257E,0x1D0E,0x1592,0x0F1D,0x09BE,0x0583,0x0276,0x009E,0x0000,0x009E,0x276,0x583,0x9BE,0x0F1D,0x1592,0x1D0E,0x257E,0x2ECC,0x38E3,0x43A9,0x4F04,0x5AD8,0x6707,0x7374
+
+
+
+
+
